@@ -1,0 +1,211 @@
+# Copy to config/config.yaml, then provide secrets only through Vault or environment variables.
+# Do not commit config.yaml, .env, database files, or host key material.
+
+application:
+  name: hermes
+  environment: production
+  api_bind_host: 127.0.0.1
+  api_bind_port: 8000
+  audit_log_path: /var/lib/hermes/audit.jsonl
+  request_id_header: X-Request-ID
+
+models:
+  ollama:
+    base_url: http://host.docker.internal:11434
+    health_path: /api/tags
+    request_timeout_seconds: 45
+  router:
+    model: llama3.2:3b
+    temperature: 0.0
+    max_tokens: 280
+    allowed_routes: [fast, reasoning]
+  fast:
+    provider: ollama
+    model: llama3.2:3b
+    request_timeout_seconds: 20
+  reasoning:
+    provider: ollama
+    model: mixtral:8x7b
+    request_timeout_seconds: 90
+
+voice:
+  wake_word:
+    enabled: true
+    engine: porcupine
+    target_activation_latency_ms: 300
+    access_key_secret_ref: vault:secret/hermes/porcupine#access_key
+  stt:
+    provider: local-whisper
+    endpoint: http://stt:10300
+    language: en
+  tts:
+    provider: piper
+    endpoint: http://tts:10200
+    voice: en_US-lessac-medium
+
+security:
+  secrets_backend: vault # allowed values: vault, environment
+  vault:
+    address: https://vault.local:8200
+    token_secret_ref: env:HERMES_VAULT_TOKEN
+    kv_mount: secret
+    allow_insecure_tls: false
+  encryption:
+    record_cipher: AES-256-GCM
+    kdf: Argon2id
+    salt_path: /var/lib/hermes/key-salt.bin
+    # Supply at boot through an interactive secret mechanism; never write this value to YAML.
+    master_passphrase_secret_ref: env:HERMES_BOOT_PASSPHRASE
+    argon2id:
+      time_cost: 3
+      memory_cost_kib: 65536
+      parallelism: 2
+      hash_len: 32
+    key_rotation_days: 180
+  transport_e2ee:
+    mode: adapter # `adapter` has no Signal interoperability by itself.
+    signal_sidecar:
+      enabled: false
+      endpoint: http://signal-sidecar:7070
+      package: '@signalapp/libsignal-client'
+      protocol_review_required: true
+  sessions:
+    access_ttl_minutes: 15
+    refresh_ttl_hours: 12
+    require_device_binding: true
+  approvals:
+    required_for:
+      - email.delete
+      - email.send_external
+      - browser.final_submit
+      - browser.verification
+      - browser.payment
+      - p2p.publish
+    token_ttl_seconds: 300
+
+network:
+  tailscale:
+    enabled: true
+    management_mode: host_cli
+    service_name: svc:hermes-api
+    health_check_command: [tailscale, status, --json]
+    serve_status_command: [tailscale, serve, status, --json]
+    local_proxy_target: http://127.0.0.1:8000
+    # API access token is for administrative automation only and should be tightly scoped.
+    api_token_secret_ref: vault:secret/hermes/tailscale#api_token
+    allow_funnel: false
+  tor:
+    enabled: false
+    socks5_url: socks5h://tor:9050
+    onion_admin_enabled: false
+    onion_admin_local_target: http://127.0.0.1:8000
+    require_proxy_health: true
+    allow_domains: []
+  egress:
+    default_policy: deny
+    approved_domains:
+      - api.openweathermap.org
+      - api.jellyfin.local
+      - imap.gmail.com
+      - smtp.gmail.com
+
+persistence:
+  database:
+    driver: postgresql # use sqlite only for single-host development
+    url_secret_ref: env:HERMES_DATABASE_URL
+    pool_size: 5
+    connect_timeout_seconds: 10
+  encrypted_file_store:
+    root_path: /var/lib/hermes/files
+    fsync_writes: true
+  redis:
+    url_secret_ref: env:HERMES_REDIS_URL
+    socket_timeout_seconds: 5
+
+integrations:
+  email:
+    providers:
+      gmail:
+        protocol: imap_smtp_oauth2
+        imap_host: imap.gmail.com
+        imap_port: 993
+        smtp_host: smtp.gmail.com
+        smtp_port: 587
+        oauth_client_secret_ref: vault:secret/hermes/email/gmail#oauth_client
+        require_approval_for_destructive_actions: true
+      outlook:
+        protocol: graph_oauth2
+        graph_endpoint: https://graph.microsoft.com/v1.0
+        oauth_client_secret_ref: vault:secret/hermes/email/outlook#oauth_client
+        require_approval_for_destructive_actions: true
+    default_provider: gmail
+    fallback_provider: outlook
+  jellyfin:
+    base_url: http://jellyfin:8096
+    api_key_secret_ref: vault:secret/hermes/jellyfin#api_key
+  home_automation:
+    provider: home_assistant
+    base_url: http://homeassistant.local:8123
+    token_secret_ref: vault:secret/hermes/home_assistant#token
+  browser_assistant:
+    enabled: true
+    driver: playwright
+    use_stealth: false
+    allow_targets: []
+    headless: false
+    stop_before:
+      - captcha
+      - two_factor_authentication
+      - verification_code
+      - payment
+      - final_submission
+    job_timeout_seconds: 120
+    max_concurrent_jobs: 1
+  p2p:
+    enabled: false
+    allow_publish: false
+    max_shared_bytes: 10737418240
+    require_explicit_approval: true
+
+plugins:
+  directory: /opt/hermes/plugins
+  hot_reload: false
+  verify_manifest: true
+  permitted_capabilities:
+    - home.read
+    - home.control
+    - media.read
+    - media.control
+    - email.read
+    - email.compose
+    - email.send_external
+    - browser.assist
+    - p2p.transfer
+  denied_capabilities:
+    - shell.execute
+    - network.any_destination
+    - credential.read_raw
+
+resilience:
+  retries:
+    attempts: 4
+    initial_backoff_seconds: 0.5
+    max_backoff_seconds: 8
+    jitter: true
+  heartbeat:
+    interval_seconds: 10
+    failures_before_unhealthy: 3
+    primary_node: hermes-a
+    secondary_nodes: [hermes-b]
+  queue:
+    task_time_limit_seconds: 180
+    task_soft_time_limit_seconds: 150
+    max_retries: 3
+
+observability:
+  log_level: INFO
+  structured_logs: true
+  redact_fields: [authorization, password, token, secret, passphrase, email_body]
+  metrics_enabled: true
+  health_endpoint: /healthz
+  readiness_endpoint: /readyz

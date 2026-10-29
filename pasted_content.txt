@@ -1,0 +1,61 @@
+Principal Systems Architect & AI Agent Engineer for "Project Hermes" (The Sovereign Local AI Assistant)
+
+Context: I need you to act as my Lead Architect and DevOps Engineer. I am building a decentralized, privacy-first, locally-hosted AI voice assistant to replace Amazon Alexa. The stack must run on my homelab, utilize my local LLMs (via Ollama/LM Studio), and be accessible globally via Tailscale.
+
+Objective: Generate a complete, executable blueprint and codebase structure for "Hermes." It must include Dockerization, Python/FastAPI backend, secure WebRTC/VoIP for voice, and a modular plugin system.
+
+Core Technical Requirements (Non-Negotiable):
+
+    Local LLM Orchestration: Integrate with Ollama APIs. Implement a routing layer (Router LLM) that decides if a query goes to a small fast model (e.g., Llama 3.2 3B) for basic commands, or a large reasoning model (e.g., Mixtral 8x7B) for complex multi-step tasks.
+
+    Universal API & Web Connectivity: Build a generic connector using Playwright for headless browsers and httpx for REST/GraphQL. It must accept dynamic API keys securely stored in a local HashiCorp Vault (or encrypted .env).
+
+    Tailscale Overlay Network: The stack must bind to the Tailscale interface (e.g., 100.x.x.x). Create a WebDAV/SMB gateway so I can access files remotely. For streaming video/music, integrate with Jellyfin/Emby APIs or set up a lightweight RTSP/WebRTC relay that routes through Tailscale for low-latency remote viewing.
+
+    Active-Active Failover System: For critical services (e.g., TTS, light controls), implement a heartbeat monitor. If Primary Device (Server A) fails, routing must automatically failover to Secondary Device (Server B or a Raspberry Pi cluster) via a shared floating IP or DNS update in Tailscale.
+
+    Agency-Grade End-to-End Encryption (E2EE): Do not rely solely on TLS. Implement the Signal Protocol (Double Ratchet Algorithm) using libsignal-client for all command/response payloads between the client app and the server. Ensure Perfect Forward Secrecy. All local sensitive data must be encrypted at rest with AES-256-GCM, with the master key derived via Argon2id from a passphrase I input at boot.
+
+    Tor Integration & P2P:
+
+        Integrate socks proxies to route specific web-scraping tasks through the Tor network (with a kill-switch if Tor drops).
+
+        Spin up a Tor Hidden Service (onion address) alongside the Tailscale interface, allowing me to access the admin dashboard via .onion if Tailscale is unavailable.
+
+        Implement P2P file sharing capabilities using libp2p or webtorrent for distributing large media files between my devices without central cloud storage.
+
+    Modular Scalability (The Plugin Registry): Define a strict Python BasePlugin abstract class. The system must watch a /plugins directory and hot-load new modules without restarting the core service. Provide a scaffold for future modules (e.g., "HomeAutomation", "EmailManager", "StockTrader").
+
+Specific Action-Oriented Capabilities (Tools):
+
+    Email Management: Build an IMAP/SMTP tool. When I say, "Check my Gmail," it must authenticate (OAuth2 or App Pass), fetch unread emails, and upon my command, execute mark_as_read or delete permanently.
+
+    Account Creation Automation: Build a specialized BrowserAutomation module using Playwright with stealth plugins. This module must navigate to sign-up pages, fill fields, and handle 2FA/Email verification. Crucially: it must pause execution at the "Verification Code" step, trigger a push notification to my phone (via Pushover/Ntfy), wait for my manual input, and then complete the submission.
+
+Scalability & Future-Proofing:
+
+    Design the database schema (SQLite/Postgres) with polymorphic associations so I can attach arbitrary metadata to any "Entity" (User, Device, Plugin).
+
+    Include a MCP (Model Context Protocol) server gateway so I can easily swap out the core LLM or add external reasoning models in the future.
+
+Deliverables Required from You (Manus):
+
+    Architecture Diagram (in Mermaid.js) showing the data flow from Voice Input -> STT -> Router LLM -> Tool Execution -> E2EE Encryption -> Tailscale/Tor Egress.
+
+    Docker Compose V3 file with separate services for: API Gateway, Worker Queue (Celery/Redis), TTS/STT, and the Plugin Host.
+
+    Core Python Code: Specifically, the main.py, the BasePlugin class, the E2EE_Manager wrapping libsignal, and the Tailscale_Connector script.
+
+    Configuration YAML: A detailed config.yaml structure mapping all API endpoints (e.g., email: provider: gmail, fallback: outlook).
+
+    Security Hardening Script: A Bash script to lock down the Linux host (AppArmor/SELinux profiles, firewall rules allowing only Tailscale/Tor traffic, and auditd logging for all command executions).
+
+Constraints & Edge Cases:
+
+    Must function with zero internet connectivity for core features (lights, local music) if WAN is down (utilize the local LLM).
+
+    Latency for voice activation must be < 300ms (use a local wake-word engine like Porcupine).
+
+    All generated code must be highly documented for my future self to understand the complex cryptography.
+
+Execution Strategy: Please research the latest stable APIs for libsignal, playwright-stealth, and tailscale-python (or subprocess management) to ensure compatibility. Write the code robustly, with retry logic and exponential backoff for all external calls. Begin by outputting the architecture and configuration files, followed by the core security module.

@@ -1,0 +1,150 @@
+name: hermes
+
+x-hermes-image: &hermes-image
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: hermes-api:local
+
+x-common-env: &common-env
+  HERMES_CONFIG_PATH: /app/config/config.yaml
+  HERMES_DATABASE_URL: postgresql+asyncpg://hermes:${POSTGRES_PASSWORD:?set_in_env_file}@postgres:5432/hermes
+  HERMES_REDIS_URL: redis://redis:6379/0
+
+services:
+  api:
+    <<: *hermes-image
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *common-env
+      HERMES_BOOT_PASSPHRASE: ${HERMES_BOOT_PASSPHRASE:?inject_at_boot}
+      HERMES_VAULT_TOKEN: ${HERMES_VAULT_TOKEN:-}
+    volumes:
+      - ../config:/app/config:ro
+      - hermes_state:/var/lib/hermes
+      - hermes_plugins:/opt/hermes/plugins:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *hermes-image
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    environment: *common-env
+    volumes:
+      - ../config:/app/config:ro
+      - hermes_state:/var/lib/hermes
+      - hermes_plugins:/opt/hermes/plugins:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  plugin-host:
+    <<: *hermes-image
+    command: ["python", "-m", "app.plugin_host"]
+    environment: *common-env
+    volumes:
+      - ../config:/app/config:ro
+      - hermes_plugins:/opt/hermes/plugins:ro
+      - hermes_state:/var/lib/hermes
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  stt:
+    image: ghcr.io/ggerganov/whisper.cpp:main
+    command: ["/bin/sh", "-c", "echo 'Replace this placeholder with a reviewed local STT runtime'; sleep infinity"]
+    networks: [private]
+    profiles: [voice]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  tts:
+    image: rhasspy/wyoming-piper:latest
+    command: ["--uri", "tcp://0.0.0.0:10200"]
+    volumes:
+      - piper_data:/data
+    networks: [private]
+    profiles: [voice]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hermes
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set_in_env_file}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [private]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermes"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  private:
+    internal: true
+
+volumes:
+  hermes_state:
+  hermes_plugins:
+  postgres_data:
+  redis_data:
+  piper_data:
